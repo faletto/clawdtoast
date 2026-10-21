@@ -13,6 +13,18 @@ pub enum Position {
     BottomRight,
 }
 
+impl Position {
+    #[cfg(target_os = "linux")]
+    pub fn is_top(self) -> bool {
+        matches!(self, Position::TopLeft | Position::TopRight)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn is_left(self) -> bool {
+        matches!(self, Position::TopLeft | Position::BottomLeft)
+    }
+}
+
 #[derive(Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Sound {

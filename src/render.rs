@@ -15,8 +15,27 @@ const SPRITE_PNG: &[u8] = include_bytes!("../assets/clawd.png");
 const FONT_CANDIDATES: &[(&str, usize)] = &[
     ("/System/Library/Fonts/Supplemental/Arial.ttf", 0),
     ("/Library/Fonts/Arial.ttf", 0),
+    // Common Linux locations (Alpine/Arch, Debian/Ubuntu, Fedora).
+    ("/usr/share/fonts/noto/NotoSans-Regular.ttf", 0),
+    ("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", 0),
+    ("/usr/share/fonts/dejavu/DejaVuSans.ttf", 0),
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 0),
+    ("/usr/share/fonts/TTF/DejaVuSans.ttf", 0),
+    ("/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf", 0),
+    ("/usr/share/fonts/liberation/LiberationSans-Regular.ttf", 0),
+    ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 0),
 ];
-const BOLD_CANDIDATES: &[(&str, usize)] = &[("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 0)];
+const BOLD_CANDIDATES: &[(&str, usize)] = &[
+    ("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 0),
+    ("/usr/share/fonts/noto/NotoSans-Bold.ttf", 0),
+    ("/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf", 0),
+    ("/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf", 0),
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 0),
+    ("/usr/share/fonts/TTF/DejaVuSans-Bold.ttf", 0),
+    ("/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf", 0),
+    ("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", 0),
+    ("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 0),
+];
 
 /// A sheet of square frames laid out left to right; frame size is the image height.
 pub struct Sprite {
@@ -225,4 +244,16 @@ pub fn render(card: &Card, assets: &Assets, frame: usize, w: u32, h: u32, scale:
         .chunks_exact(4)
         .map(|p| (p[3] as u32) << 24 | (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32)
         .collect()
+}
+
+/// Pixels as bytes for a little-endian ARGB8888 buffer, faded to `q`/255 opacity. The pixels are
+/// premultiplied, so fading is scaling every channel.
+#[cfg(target_os = "linux")]
+pub fn fade_bytes(pixels: &[u32], q: u8) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(pixels.len() * 4);
+    for &p in pixels {
+        let c = |sh: u32| (((p >> sh) & 0xff) * q as u32 / 255) << sh;
+        bytes.extend_from_slice(&(c(24) | c(16) | c(8) | c(0)).to_le_bytes());
+    }
+    bytes
 }

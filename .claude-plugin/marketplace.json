@@ -6,7 +6,7 @@
     {
       "name": "clawdtoast",
       "source": "./",
-      "description": "A tiny Clawd pops up with a chime when Claude Code finishes or needs you (macOS)."
+      "description": "A tiny Clawd pops up with a chime when Claude Code finishes or needs you (macOS and Linux)."
     }
   ]
 }

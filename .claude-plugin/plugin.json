@@ -1,8 +1,8 @@
 {
   "name": "clawdtoast",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A tiny Clawd pops up in the corner of your screen, with a chime, when Claude Code finishes or needs you.",
   "author": { "name": "Colin Faletto" },
   "license": "MIT",
-  "keywords": ["notifications", "hooks", "macos"]
+  "keywords": ["notifications", "hooks", "macos", "linux"]
 }

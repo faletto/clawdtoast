@@ -5,6 +5,10 @@ mod install;
 mod log;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod overlay;
+#[cfg(target_os = "linux")]
+#[path = "overlay_wayland.rs"]
 mod overlay;
 mod paths;
 mod protocol;
@@ -13,6 +17,12 @@ mod shim;
 mod sound;
 mod stack;
 mod text;
+#[cfg(target_os = "linux")]
+mod timeline;
+#[cfg(target_os = "linux")]
+mod feed;
+#[cfg(target_os = "linux")]
+mod overlay_x11;
 
 use protocol::{Kind, Msg};
 

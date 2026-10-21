@@ -19,3 +19,30 @@ jobs:
       - name: Plugin manifests
         run: |
           python3 -c "import json; [json.load(open(f)) for f in ('.claude-plugin/plugin.json','.claude-plugin/marketplace.json','hooks/hooks.json')]"
+
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build dependencies and headless display servers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config xvfb sway
+      - run: cargo test
+      - run: cargo build --release
+      - name: Lifecycle tests (headless daemon)
+        run: tests/integration.sh target/release/clawdtoast
+      - name: Resource budgets
+        run: scripts/check_budgets.sh target/release/clawdtoast
+      - name: Overlay on X11 (Xvfb)
+        run: |
+          Xvfb :99 -screen 0 1280x800x24 &
+          sleep 2
+          env -u WAYLAND_DISPLAY DISPLAY=:99 CLAWDTOAST_CI_GUI=1 CLAWDTOAST_CI_GUI_ONLY=1 \
+            scripts/check_budgets.sh target/release/clawdtoast
+      - name: Overlay on Wayland (headless sway, layer-shell)
+        run: |
+          export XDG_RUNTIME_DIR="$(mktemp -d)" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman
+          sway &
+          for _ in $(seq 20); do [ -S "$XDG_RUNTIME_DIR/wayland-1" ] && break; sleep 0.5; done
+          env -u DISPLAY WAYLAND_DISPLAY=wayland-1 CLAWDTOAST_CI_GUI=1 CLAWDTOAST_CI_GUI_ONLY=1 \
+            scripts/check_budgets.sh target/release/clawdtoast

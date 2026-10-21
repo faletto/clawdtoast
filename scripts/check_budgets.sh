@@ -1,6 +1,7 @@
 #!/bin/bash
 # Resource budgets from the design doc. Usage: scripts/check_budgets.sh [path/to/release/clawdtoast]
-# Set CLAWDTOAST_CI_GUI=1 on a machine with a window server to also check the overlay.
+# Set CLAWDTOAST_CI_GUI=1 on a machine with a window server to also check the overlay, and
+# CLAWDTOAST_CI_GUI_ONLY=1 to check only the overlay.
 set -u
 BIN="${1:-target/release/clawdtoast}"
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
@@ -19,8 +20,9 @@ report() { # name value limit unit
 cleanup() { pkill -f "$BIN daemon" 2>/dev/null; pkill -f "$BIN overlay" 2>/dev/null; rm -rf "$CLAWDTOAST_DIR"; }
 trap cleanup EXIT
 
-report "binary size" "$(( $(stat -f %z "$BIN" 2>/dev/null || stat -c %s "$BIN") / 1024 ))" $MAX_SIZE_KB KB
+report "binary size" "$(( $(stat -c %s "$BIN" 2>/dev/null || stat -f %z "$BIN") / 1024 ))" $MAX_SIZE_KB KB
 
+if [ -z "${CLAWDTOAST_CI_GUI_ONLY:-}" ]; then
 # Idle daemon memory, 10 s after start, with one registered session.
 CLAWDTOAST_GRACE_SECS=600 CLAWDTOAST_HEADLESS=1 "$BIN" hook session-start <<< '{"session_id":"bud","cwd":"/x/proj"}'
 sleep 10
@@ -42,6 +44,8 @@ print(int(ts[37]) + 1)
 EOF
 )
 report "shim p95" "$P95" $MAX_SHIM_P95_MS ms
+fi
+
 pkill -f "$BIN daemon"; sleep 0.5; rm -rf "$CLAWDTOAST_DIR"; mkdir -p "$CLAWDTOAST_DIR"
 
 if [ "${CLAWDTOAST_CI_GUI:-}" = "1" ]; then
