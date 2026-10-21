@@ -5,9 +5,10 @@
 pub enum Backend {
     /// wlr-layer-shell (wlroots compositors, KDE, COSMIC, ...).
     Wayland,
-    /// Override-redirect window through winit.
+    /// Override-redirect window through winit. Also used on Wayland sessions that have XWayland but
+    /// no layer-shell (GNOME).
     X11,
-    /// A desktop notification over D-Bus (GNOME on Wayland has no layer-shell).
+    /// A desktop notification, for sessions where neither of the above can draw a card.
     Notify,
 }
 
@@ -22,9 +23,14 @@ pub fn order(env: impl Fn(&str) -> Option<String>) -> Vec<Backend> {
         _ => {}
     }
     if set("WAYLAND_DISPLAY") {
-        // A Wayland session without layer-shell (GNOME) falls back to a notification rather than
-        // XWayland, where an override-redirect window would not reliably sit above other windows.
-        vec![Backend::Wayland, Backend::Notify]
+        // A Wayland session without layer-shell (GNOME) still gets the Clawd card through XWayland,
+        // where an override-redirect window sits above the other windows. Only a session with no X
+        // server either falls back to a notification.
+        if set("DISPLAY") {
+            vec![Backend::Wayland, Backend::X11, Backend::Notify]
+        } else {
+            vec![Backend::Wayland, Backend::Notify]
+        }
     } else if set("DISPLAY") {
         vec![Backend::X11, Backend::Notify]
     } else {
@@ -46,9 +52,18 @@ mod tests {
     }
 
     #[test]
-    fn wayland_session_prefers_layer_shell_then_notification() {
+    fn wayland_session_prefers_layer_shell_then_xwayland_then_notification() {
         let e = env(&[("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":0")]);
-        assert_eq!(order(e), vec![Backend::Wayland, Backend::Notify]);
+        assert_eq!(order(e), vec![Backend::Wayland, Backend::X11, Backend::Notify]);
+    }
+
+    #[test]
+    fn wayland_session_without_xwayland_falls_back_to_notification() {
+        assert_eq!(order(env(&[("WAYLAND_DISPLAY", "wayland-0")])), vec![Backend::Wayland, Backend::Notify]);
+        assert_eq!(
+            order(env(&[("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", "")])),
+            vec![Backend::Wayland, Backend::Notify]
+        );
     }
 
     #[test]

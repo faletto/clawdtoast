@@ -63,10 +63,10 @@ How a card is shown depends on the session:
 |---|---|---|
 | X11 | An override-redirect window, so no window manager can focus, frame or tile it | Placed on the monitor under the pointer, inside the panel-free work area (`_NET_WORKAREA`). Fades need a compositor; without one the card is drawn opaque and just appears and disappears. Click focuses the window owning an ancestor PID of Claude Code (`_NET_ACTIVE_WINDOW`); terminals that run every window in one server process (gnome-terminal) are not found, and the click then only dismisses. |
 | Wayland with `wlr-layer-shell` (sway, Hyprland, river, KDE, COSMIC, ...) | A layer surface on the overlay layer with no keyboard interactivity | The compositor picks the monitor, since Wayland gives clients no pointer position. A click only dismisses: Wayland cannot raise another client's window. |
-| Wayland without it (GNOME) | A desktop notification through `notify-send`, or `gdbus` if that is missing | No Clawd animation; the desktop owns placement and timing. A new alert for a session replaces its previous notification where the notification daemon supports it. |
+| Wayland without it (GNOME) | The X11 override-redirect window above, through XWayland | Same card as on X11, placed below the top bar. The cards are hidden while GNOME's Activities overview is open, and a native Wayland full-screen app can cover them. Without XWayland (`DISPLAY` unset) it falls back to a desktop notification through `notify-send`, or `gdbus` if that is missing: no Clawd animation, the desktop owns placement and timing, and a new alert for a session replaces its previous notification where the notification daemon supports it. |
 | No display (SSH, a bare VT) | Nothing: the hook exits at once and starts no daemon | |
 
-`CLAWDTOAST_BACKEND=wayland|x11|notify` forces one path (the others stay as fallbacks), for testing or for desktops that misreport themselves. Not yet tried on a real GNOME, KDE or Hyprland session, with several monitors, or at HiDPI scales; see [Limitations](#limitations).
+`CLAWDTOAST_BACKEND=wayland|x11|notify` forces one path (the others stay as fallbacks), for testing or for desktops that misreport themselves. Tried in virtual machines on GNOME (through XWayland: placement, hover, click) and KDE Plasma 6 (layer-shell at 1x and 2x), but not on real hardware, on Hyprland, or with several monitors; see [Limitations](#limitations).
 
 ## Config
 
@@ -96,7 +96,7 @@ Environment overrides (handy for tests): `CLAWDTOAST_CONFIG`, `CLAWDTOAST_DURATI
 
 - **No cards after installing or updating:** the binary is still building. Check `target/build.log` in the plugin's folder (`~/.claude/plugins/cache/clawdtoast/clawdtoast/<version>`).
 - **Click doesn't focus anything:** `clawdtoast.log` says why (`no app found above pid ...`, `card has no pid ...`).
-- **Linux, no card and no notification:** `clawdtoast.log` names the cause: missing X11 libraries, a Wayland compositor without layer-shell and no `notify-send`/`gdbus` installed (`libnotify-bin` on Debian/Ubuntu), or no display in the hook's environment (`DISPLAY`/`WAYLAND_DISPLAY` unset, as over SSH or in a stale tmux server).
+- **Linux, no card and no notification:** `clawdtoast.log` names the cause: missing X11 libraries, a Wayland compositor without layer-shell and no X server (`DISPLAY` unset) and no `notify-send`/`gdbus` installed (`libnotify-bin` on Debian/Ubuntu), or no display in the hook's environment (`DISPLAY`/`WAYLAND_DISPLAY` unset, as over SSH or in a stale tmux server).
 - **Two daemons running:** a daemon from before 0.1.3 can't be replaced automatically; kill it and the next hook starts the current one.
 
 ## Development
@@ -114,7 +114,7 @@ CI (`.github/workflows/ci.yml`) runs the first three on macOS and Ubuntu, `cargo
 
 ### Linux tests
 
-`tests/linux/x11.sh`, `wayland.sh` and `fallback.sh` drive a real Xvfb (with and without `xcompmgr`) and a headless sway, and check windows, screenshot pixels, the notification fallback and no-display behaviour. They run directly on an Ubuntu box with the packages listed in `tests/linux/Dockerfile`, which is also how CI runs them. On a Mac, `tests/linux/run.sh [test|lifecycle|budgets|x11|x11-comp|wayland|fallback|all]` builds the binary in a Linux container (Docker, or colima) and runs them; screenshots land in `target/linux-shots/`.
+`tests/linux/x11.sh`, `wayland.sh` and `fallback.sh` drive a real Xvfb (with and without `xcompmgr`) and a headless sway, and check windows, screenshot pixels, the notification fallback and no-display behaviour. They run directly on an Ubuntu box with the packages listed in `tests/linux/Dockerfile`, which is also how CI runs them. On a Mac, `tests/linux/run.sh [test|lifecycle|budgets|x11|x11-comp|x11-wayland|wayland|fallback|all]` builds the binary in a Linux container (Docker, or colima) and runs them; screenshots land in `target/linux-shots/`.
 
 ### Budgets
 

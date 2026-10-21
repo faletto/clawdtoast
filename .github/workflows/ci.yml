@@ -42,6 +42,8 @@ jobs:
         run: tests/linux/x11.sh "$PWD/target/release/clawdtoast" "$RUNNER_TEMP/shots"
       - name: X11 overlay with a compositor
         run: tests/linux/x11.sh "$PWD/target/release/clawdtoast" "$RUNNER_TEMP/shots" compositor
+      - name: X11 overlay as the fallback for a Wayland session without layer-shell
+        run: tests/linux/x11.sh "$PWD/target/release/clawdtoast" "$RUNNER_TEMP/shots" wayland-fallback
       - name: Wayland overlay (headless sway)
         run: tests/linux/wayland.sh "$PWD/target/release/clawdtoast" "$RUNNER_TEMP/shots"
       - name: Notification fallback and no-display behaviour

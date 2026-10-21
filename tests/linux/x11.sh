@@ -1,12 +1,14 @@
 #!/bin/bash
 # X11 overlay scenario, run inside the container (see run.sh). Starts Xvfb (optionally with a
 # compositor), shows cards, and checks the windows through xwininfo; screenshots go to $OUT.
-# Usage: x11.sh BIN OUT [compositor]
+# Usage: x11.sh BIN OUT [compositor|wayland-fallback]
+# wayland-fallback sets WAYLAND_DISPLAY to a compositor that cannot be reached, like a GNOME
+# session whose Mutter has no layer-shell: the cards must still appear, through the X server.
 set -u
 BIN=$1 OUT=$2 COMP=${3:-}
 mkdir -p "$OUT"
 export CLAWDTOAST_DIR="$(mktemp -d)" CLAWDTOAST_MUTE=1 CLAWDTOAST_PID=$$ CLAWDTOAST_GRACE_SECS=1
-unset WAYLAND_DISPLAY
+if [ "$COMP" = wayland-fallback ]; then export WAYLAND_DISPLAY=wayland-does-not-exist; else unset WAYLAND_DISPLAY; fi
 # On a shared machine (CI) a daemon left by an earlier scenario would skew the process checks.
 pkill -f "$BIN (daemon|overlay)" 2>/dev/null; sleep 0.5
 trap 'pkill -f "$BIN (daemon|overlay)" 2>/dev/null' EXIT
