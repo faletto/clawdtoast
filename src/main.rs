@@ -5,6 +5,7 @@ mod config;
 mod core;
 mod daemon;
 mod geom;
+mod hololive;
 mod install;
 mod ipc;
 mod log;

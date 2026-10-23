@@ -52,6 +52,7 @@ struct WCard {
     card: Card,
     timing: Timing,
     frame: usize,
+    sprite: usize,
     scale: i32,
     /// The compositor has acked the surface, so buffers may be attached.
     configured: bool,
@@ -218,7 +219,15 @@ fn paint(pool: &mut SlotPool, assets: &render::Assets, c: &mut WCard, alpha: f64
     }
     let scale = c.scale.max(1);
     let (w, h) = (render::CARD_W as i32 * scale, render::CARD_H as i32 * scale);
-    let mut pixels = render::render(&c.card, assets, c.frame, w as u32, h as u32, scale as f64);
+    let mut pixels = render::render(
+        &c.card,
+        assets,
+        c.sprite,
+        c.frame,
+        w as u32,
+        h as u32,
+        scale as f64,
+    );
     if alpha < 1.0 {
         render::fade(&mut pixels, alpha);
     }
@@ -264,9 +273,12 @@ impl Wl {
                         .unwrap_or(0.0)
                 } else {
                     c.timing.restart();
+                    c.sprite = self.assets.choose_sprite();
                     0.0
                 };
-                c.frame = 0;
+                c.frame = self
+                    .assets
+                    .frame_at(&c.card, c.sprite, &c.timing, Instant::now());
                 paint(&mut self.pool, &self.assets, c, alpha);
             }
             Offer::Queued => {}
@@ -303,6 +315,7 @@ impl Wl {
             card,
             timing: Timing::new(),
             frame: 0,
+            sprite: self.assets.choose_sprite(),
             scale: 1,
             configured: false,
             drawn_alpha: -1.0,
@@ -345,18 +358,14 @@ impl Wl {
             let Some(alpha) = c.timing.alpha(now, hold) else {
                 continue;
             };
-            let frame = c.timing.wave_frame(
-                now,
-                self.assets.frames_for(&c.card),
-                self.assets.frame_interval_for(&c.card),
-            );
+            let frame = self.assets.frame_at(&c.card, c.sprite, &c.timing, now);
             if c.configured && (frame != c.frame || (alpha - c.drawn_alpha).abs() > 0.004) {
                 c.frame = frame;
                 paint(&mut self.pool, &self.assets, c, alpha);
             }
-            if let Some(wake) =
-                c.timing
-                    .next_wake(now, hold, self.assets.frame_interval_for(&c.card))
+            if let Some(wake) = self
+                .assets
+                .next_wake(&c.card, c.sprite, &c.timing, now, hold)
             {
                 next = next.min(wake);
             }

@@ -10,7 +10,7 @@ It runs while a supported agent session is open, uses about 9 MB while idle, and
 
 Download the archive for Windows x86_64, Linux x86_64 or universal macOS from
 [GitHub Releases](https://github.com/faletto/clawdtoast/releases). Each archive contains
-the executable, this README, the license and `bae.toml`. Extract it before installing
+the executable, this README, the license, `bae.toml` and `hololive.toml`. Extract it before installing
 the hooks. On Windows, put `clawdtoast.exe` in a simple path such as `D:\Tools\clawdtoast`.
 
 From the extracted directory, install the Codex hooks:
@@ -28,7 +28,8 @@ From the extracted directory, install the Codex hooks:
 Use `install` without `codex` to add Claude Code hooks. Both adapters can be installed
 on the same computer. In Codex, review and trust the installed commands with `/hooks`.
 
-To select Bae, copy the bundled `bae.toml` to `~/.config/clawdtoast/config.toml`
+To select Bae or a random Hololive character, copy the bundled `bae.toml` or
+`hololive.toml` to `~/.config/clawdtoast/config.toml`
 (`%USERPROFILE%\.config\clawdtoast\config.toml` on Windows), then run `clawdtoast reload`.
 If you already have a config, merge the preset's `[animation]` values into it to preserve other settings.
 The macOS download has an ad-hoc signature and is not notarized; see [Releasing](#releasing).
@@ -199,10 +200,10 @@ show_question_text = true   # false hides Codex structured and Stop question tex
 
 [animation]
 enabled = false             # set true to choose a sprite for all agents
-sprite = "auto"             # auto, clawd, codex, bae, or custom
+sprite = "auto"             # auto, clawd, codex, bae, hololive, or custom
 # file = "~/sprites/my-character.png"  # custom RGBA PNG sprite sheet
-fps = 8                     # selected animation speed; 1-60 fps (e.g. 11 for Bae)
-size = 88                   # Bae/custom character size in logical pixels (32-88)
+fps = 8                     # selected speed; 1-60 fps; hololive uses source timing
+size = 88                   # Bae/Hololive/custom size in logical pixels (32-88)
 ```
 
 `idle_prompt = false` remains the master switch for all waiting notifications. The new question
@@ -213,7 +214,11 @@ expire at the earlier of `max_age_secs` and `question_ttl_secs`. TTL housekeepin
 questions alone have no reliable resolution lifecycle and remain temporary. No options or
 answers appear in notifications; turn off `show_question_text` for a generic input-request body.
 
-By default (`enabled = false`), Claude notifications display Clawd and Codex notifications display the 4-frame OpenAI spinner. To choose one for **all** notifications, set `enabled = true` and `sprite = "clawd"`, `"codex"`, or `"bae"`; Bae is bundled as an 11-frame 64px sheet, displayed at 88 logical pixels by default. For Bae's original frame rate, set `fps = 11`. To use your own character, set `enabled = true`, `sprite = "custom"`, and `file` to a local **RGBA PNG** sprite sheet. Existing configs using `enabled = true` with just `file` continue to work.
+By default (`enabled = false`), Claude notifications display Clawd and Codex notifications display the 4-frame OpenAI spinner. To choose one for **all** notifications, set `enabled = true` and `sprite = "clawd"`, `"codex"`, or `"bae"`; Bae is bundled as an 11-frame 64px sheet, displayed at 88 logical pixels by default. For Bae's original frame rate, set `fps = 11`.
+
+The separate **Hololive profile** (`presets/hololive.toml`) sets `sprite = "hololive"` and picks one of 15 bundled Ccryu characters at random for each popup, for both agents. The character stays fixed while that popup animates, including hover and silent question updates. It uses the source frame durations automatically (mostly 8.33 fps; Fauna and Lamy at 9.09 fps, plus variable timing in Ame and Kiara), so `fps` is ignored for this profile. Characters fit proportionally inside the configured size with transparent padding and nearest-neighbor sampling.
+
+To use your own character, set `enabled = true`, `sprite = "custom"`, and `file` to a local **RGBA PNG** sprite sheet. Existing configs using `enabled = true` with just `file` continue to work.
 
 Use one square PNG for a static sprite, or square frames side by side in a horizontal PNG strip (for example, 11 frames of 64x64 pixels make a 704x64 sheet). Nearest-neighbor scaling keeps pixel edges sharp at all display scales; alpha is thresholded to fully transparent or fully opaque. `fps` controls the selected sprite's animation while hovering, which pauses only the dismissal timer. MP4/GIF files must first be converted to PNG strips. When a custom file is missing or invalid, the app logs the error and uses the original per-agent defaults. Sprite configuration changes take effect for new overlay processes; use `clawdtoast reload` after editing the config.
 
@@ -237,7 +242,8 @@ cargo test                          # unit tests
 ./tests/windows/codex-hooks.ps1     # Windows: PowerShell capture, hook IPC and open input pipes
 tests/integration.sh [binary]       # headless lifecycle, config, install/uninstall tests
 scripts/check_budgets.sh [binary]   # resource budgets (CLAWDTOAST_CI_GUI=1 adds the overlay checks)
-python3 -I tools/gen_assets.py      # regenerate assets/ (sprite sheet + sounds)
+python3 -I tools/gen_assets.py      # regenerate Clawd + sounds
+python tools/gen_hololive.py        # regenerate Hololive (Pillow + ffmpeg + ffprobe)
 scripts/release.sh                  # universal macOS binary in dist/, signed (see below)
 tests/linux/run.sh [scenario]       # includes attention: live persistent-question lifecycle
 ```
@@ -276,7 +282,7 @@ its assets; it refuses tags outside `main` or with a mismatched version.
 - **Font:** loads Arial (macOS, Windows) or DejaVu/Liberation/Noto (Linux) from the system at runtime. DejaVu is wider than Arial, so long titles are cut off sooner on Linux.
 - **Linux coverage:** verified on Xvfb and headless sway (placement, stacking, timeout, config position, fallback, lifecycle). Not tested: a real GNOME, KDE or Hyprland session, multiple monitors, HiDPI, pointer hover and click (the headless setups have no pointer), X11 click-to-focus, fades under a real compositor, and a real notification daemon (a stub `notify-send` stands in).
 - **Do Not Disturb / Focus:** custom overlays and built-in sounds do not consult native Focus/DND state. Set `[sound] enabled = false` to mute them. Linux native fallback notifications follow the desktop's own policy; compositor placement, fullscreen visibility, expiration, and programmatic closing remain best effort. Persistent cards use finite timeouts and attempt `CloseNotification` through `gdbus` when resolved or closed.
-- **Artwork:** Bundled sprites are `assets/clawd.png` (Claude Code), `assets/openai-spin.png` (Codex), and `assets/bae.png` (optional). Personal artwork is opt-in via `[animation]`, loaded at runtime. Source video compression artifacts may remain visible in sheets extracted from MP4s; converting to PNG avoids further losses but cannot restore original pixel colors.
+- **Artwork:** Bundled sprites are `assets/clawd.png` (Claude Code), `assets/openai-spin.png` (Codex), `assets/bae.png` (optional), and the 15 Ccryu character sheets in `assets/hololive/` (optional). Hololive source clips, filename credits and conversion details are preserved in [assets/hololive](assets/hololive/README.md). Custom artwork is opt-in via `[animation]`, loaded at runtime. Source video compression artifacts may remain visible in sheets extracted from MP4s; converting to PNG avoids further losses but cannot restore original pixel colors.
 - **Overlay race:** an alert that arrives in the instant the idle overlay exits is dropped.
 - `vendor/softbuffer` is softbuffer 0.4.8 with a one-line patch so macOS honours alpha (see `vendor/softbuffer/PATCH.md`). `fontdue` is pinned to 0.9.3 because 0.9.5 needs a newer Rust than 1.86.
 

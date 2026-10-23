@@ -80,13 +80,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/windows/codex-hooks.ps1
-      - name: Package binary, documentation and Bae preset
+      - name: Package binary, documentation and animation presets
         env:
           ASSET_NAME: ${{ matrix.asset }}
         run: |
           set -euo pipefail
           mkdir -p dist/package
-          cp README.md LICENSE presets/bae.toml dist/package/
+          cp README.md LICENSE presets/*.toml dist/package/
           case "$RUNNER_OS" in
             Windows)
               cp target/release/clawdtoast.exe dist/package/

@@ -1,0 +1,6 @@
+# Pick one random character per popup, for both Claude Code and Codex.
+# Playback uses each clip's original frame durations; fps is ignored here.
+[animation]
+enabled = true
+sprite = "hololive"
+size = 88

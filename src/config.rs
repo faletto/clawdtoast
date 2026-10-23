@@ -93,6 +93,7 @@ pub enum SpriteChoice {
     Clawd,
     Codex,
     Bae,
+    Hololive,
     Custom,
 }
 
@@ -103,8 +104,9 @@ pub struct Animation {
     pub enabled: bool,
     pub sprite: SpriteChoice,
     pub file: Option<String>,
+    /// Ignored for Hololive, which preserves each source clip's presentation times.
     pub fps: f64,
-    /// Logical pixels reserved for a custom sprite (Clawd always renders at 64).
+    /// Logical pixels reserved for Bae, Hololive or custom sprites (Clawd renders at 64).
     pub size: u32,
 }
 
@@ -310,6 +312,17 @@ subagent_stop = true
                 .animation
                 .size,
             32
+        );
+    }
+
+    #[test]
+    fn hololive_profile_is_opt_in() {
+        let c = Config::parse("[animation]\nenabled = true\nsprite = 'hololive'").unwrap();
+        assert!(c.animation.enabled);
+        assert_eq!(c.animation.sprite, SpriteChoice::Hololive);
+        assert_eq!(
+            Config::parse("").unwrap().animation.sprite,
+            SpriteChoice::Auto
         );
     }
 }

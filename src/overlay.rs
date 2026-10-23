@@ -164,6 +164,7 @@ struct Shown {
     card: Card,
     timing: Timing,
     frame: usize,
+    sprite: usize,
 }
 
 struct App {
@@ -188,6 +189,7 @@ fn draw(assets: &render::Assets, s: &mut Shown, opaque: bool) {
     let mut pixels = render::render(
         &s.card,
         assets,
+        s.sprite,
         s.frame,
         size.width,
         size.height,
@@ -247,6 +249,10 @@ impl App {
             card,
             timing: Timing::new(),
             frame: 0,
+            sprite: self
+                .assets
+                .get_or_insert_with(render::Assets::load)
+                .choose_sprite(),
         };
         #[cfg(not(target_os = "linux"))]
         platform::configure(
@@ -322,8 +328,15 @@ impl ApplicationHandler<Ev> for App {
                 s.card = card;
                 if !s.card.silent {
                     s.timing.restart();
+                    s.sprite = self
+                        .assets
+                        .get_or_insert_with(render::Assets::load)
+                        .choose_sprite();
                 }
-                s.frame = 0;
+                s.frame = self
+                    .assets
+                    .get_or_insert_with(render::Assets::load)
+                    .frame_at(&s.card, s.sprite, &s.timing, Instant::now());
                 draw(
                     self.assets.get_or_insert_with(render::Assets::load),
                     s,
@@ -383,19 +396,12 @@ impl ApplicationHandler<Ev> for App {
                 continue;
             };
             platform::set_alpha(&s.window, a);
-            let frame = s.timing.wave_frame(
-                now,
-                assets.frames_for(&s.card),
-                assets.frame_interval_for(&s.card),
-            );
+            let frame = assets.frame_at(&s.card, s.sprite, &s.timing, now);
             if frame != s.frame {
                 s.frame = frame;
                 draw(assets, s, self.opaque);
             }
-            if let Some(wake) = s
-                .timing
-                .next_wake(now, hold, assets.frame_interval_for(&s.card))
-            {
+            if let Some(wake) = assets.next_wake(&s.card, s.sprite, &s.timing, now, hold) {
                 next = next.min(wake);
             }
         }

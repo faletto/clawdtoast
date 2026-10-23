@@ -74,18 +74,54 @@ impl Timing {
         hold: Duration,
         frame_interval: Duration,
     ) -> Option<Instant> {
+        let tick = frame_interval.as_nanos().max(1);
+        let age = now
+            .saturating_duration_since(self.animation_since)
+            .as_nanos();
+        let delay = Duration::from_nanos((tick - age % tick) as u64);
+        self.next_wake_after(now, hold, delay)
+    }
+
+    /// Source presentation times can vary inside a loop, even in nominally 8.33 fps clips.
+    fn frame_phase(&self, now: Instant, durations: &[Duration]) -> (usize, Duration) {
+        let cycle: Duration = durations.iter().copied().sum();
+        let mut phase = now
+            .saturating_duration_since(self.animation_since)
+            .as_nanos()
+            % cycle.as_nanos().max(1);
+        for (i, duration) in durations.iter().enumerate() {
+            if phase < duration.as_nanos() {
+                return (
+                    i,
+                    Duration::from_nanos((duration.as_nanos() - phase) as u64),
+                );
+            }
+            phase -= duration.as_nanos();
+        }
+        (0, WAVE_FRAME)
+    }
+
+    pub fn wave_frame_durations(&self, now: Instant, durations: &[Duration]) -> usize {
+        self.frame_phase(now, durations).0
+    }
+
+    pub fn next_wake_durations(
+        &self,
+        now: Instant,
+        hold: Duration,
+        durations: &[Duration],
+    ) -> Option<Instant> {
+        self.next_wake_after(now, hold, self.frame_phase(now, durations).1)
+    }
+
+    fn next_wake_after(&self, now: Instant, hold: Duration, to_frame: Duration) -> Option<Instant> {
         let t = self.age(now);
         if t < FADE_IN || t >= hold {
             Some(now + FRAME)
+        } else if self.hover_since.is_some() {
+            Some(now + to_frame)
         } else {
-            let tick = frame_interval.as_nanos().max(1);
-            let animation_age = now.saturating_duration_since(self.animation_since);
-            let to_frame = Duration::from_nanos((tick - animation_age.as_nanos() % tick) as u64);
-            if self.hover_since.is_some() {
-                Some(now + to_frame)
-            } else {
-                Some((now + to_frame).min(self.shown_at + hold))
-            }
+            Some((now + to_frame).min(self.shown_at + hold))
         }
     }
 }
@@ -93,6 +129,35 @@ impl Timing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_durations_control_boundaries_looping_and_hover() {
+        let mut t = Timing::new();
+        let durations = [120, 100, 150].map(Duration::from_millis);
+        let at = |ms| t.shown_at + Duration::from_millis(ms);
+        for (ms, frame) in [
+            (119, 0),
+            (120, 1),
+            (219, 1),
+            (220, 2),
+            (369, 2),
+            (370, 0),
+            (490, 1),
+        ] {
+            assert_eq!(t.wave_frame_durations(at(ms), &durations), frame);
+        }
+        let now = at(225);
+        assert_eq!(
+            t.next_wake_durations(now, Duration::from_secs(5), &durations),
+            Some(at(370))
+        );
+        t.hover_since = Some(t.shown_at + Duration::from_millis(200));
+        assert_eq!(t.wave_frame_durations(now, &durations), 2);
+        assert_eq!(
+            t.next_wake_durations(now, Duration::from_secs(5), &durations),
+            Some(t.shown_at + Duration::from_millis(370))
+        );
+    }
 
     #[test]
     fn fades_in_holds_fades_out() {

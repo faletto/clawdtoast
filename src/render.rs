@@ -4,7 +4,9 @@ use crate::config::{Animation, Config, SpriteChoice};
 use crate::core::Card;
 use crate::protocol::Kind;
 use fontdue::{Font, FontSettings};
-use std::time::Duration;
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher;
+use std::time::{Duration, Instant};
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 pub const CARD_W: f64 = 320.0;
@@ -81,8 +83,14 @@ pub struct Assets {
     override_both: bool,
     frame_interval: Duration,
     sprite_size: u32,
+    hololive: Vec<TimedSprite>,
     regular: Option<Font>,
     bold: Option<Font>,
+}
+
+struct TimedSprite {
+    sprite: Sprite,
+    durations: Vec<Duration>,
 }
 
 fn load_font(candidates: &[(&str, usize)]) -> Option<Font> {
@@ -165,7 +173,19 @@ impl Assets {
         self.frame_interval
     }
 
-    fn sprite_for(&self, card: &Card) -> Option<&Sprite> {
+    /// Called once when a popup opens or receives a new non-silent alert.
+    pub fn choose_sprite(&self) -> usize {
+        if self.hololive.is_empty() {
+            0
+        } else {
+            (RandomState::new().hash_one(()) % self.hololive.len() as u64) as usize
+        }
+    }
+
+    fn sprite_for(&self, card: &Card, variant: usize) -> Option<&Sprite> {
+        if let Some(selected) = self.hololive.get(variant) {
+            return Some(&selected.sprite);
+        }
         if !self.override_both && card.agent == "codex" {
             self.codex_sprite.as_ref().or(self.sprite.as_ref())
         } else {
@@ -173,8 +193,8 @@ impl Assets {
         }
     }
 
-    pub fn frames_for(&self, card: &Card) -> usize {
-        self.sprite_for(card).map_or(1, Sprite::frames)
+    pub fn frames_for(&self, card: &Card, variant: usize) -> usize {
+        self.sprite_for(card, variant).map_or(1, Sprite::frames)
     }
 
     pub fn frame_interval_for(&self, card: &Card) -> Duration {
@@ -182,6 +202,39 @@ impl Assets {
             crate::anim::WAVE_FRAME
         } else {
             self.frame_interval
+        }
+    }
+
+    pub fn frame_at(
+        &self,
+        card: &Card,
+        variant: usize,
+        timing: &crate::anim::Timing,
+        now: Instant,
+    ) -> usize {
+        if let Some(selected) = self.hololive.get(variant) {
+            timing.wave_frame_durations(now, &selected.durations)
+        } else {
+            timing.wave_frame(
+                now,
+                self.frames_for(card, variant),
+                self.frame_interval_for(card),
+            )
+        }
+    }
+
+    pub fn next_wake(
+        &self,
+        card: &Card,
+        variant: usize,
+        timing: &crate::anim::Timing,
+        now: Instant,
+        hold: Duration,
+    ) -> Option<Instant> {
+        if let Some(selected) = self.hololive.get(variant) {
+            timing.next_wake_durations(now, hold, &selected.durations)
+        } else {
+            timing.next_wake(now, hold, self.frame_interval_for(card))
         }
     }
 
@@ -203,6 +256,7 @@ impl Assets {
         let mut override_both = false;
         let mut frame_interval = crate::anim::WAVE_FRAME;
         let mut sprite_size = 64;
+        let mut hololive = Vec::new();
         if animation.enabled {
             let choice = match animation.sprite {
                 SpriteChoice::Auto if animation.file.is_some() => SpriteChoice::Custom,
@@ -215,6 +269,30 @@ impl Assets {
                 SpriteChoice::Bae => decode_sprite(BAE_SPRITE_PNG)
                     .ok()
                     .map(|s| (s, animation.size)),
+                SpriteChoice::Hololive => {
+                    let metadata = crate::hololive::metadata();
+                    for (name, bytes) in crate::hololive::SHEETS {
+                        let sprite = decode_sprite(bytes).expect("bundled Hololive sprite");
+                        let entry = metadata
+                            .iter()
+                            .find(|entry| entry.name == *name)
+                            .expect("timing for bundled Hololive sprite");
+                        assert_eq!(entry.frame_durations_ms.len(), sprite.frames());
+                        assert!(entry.frame_durations_ms.iter().all(|ms| *ms > 0));
+                        hololive.push(TimedSprite {
+                            sprite,
+                            durations: entry
+                                .frame_durations_ms
+                                .iter()
+                                .copied()
+                                .map(Duration::from_millis)
+                                .collect(),
+                        });
+                    }
+                    override_both = true;
+                    sprite_size = animation.size.clamp(32, 88);
+                    None
+                }
                 SpriteChoice::Custom => {
                     if let Some(file) = animation.file.as_deref().filter(|s| !s.trim().is_empty()) {
                         let path = crate::config::expand_home(file);
@@ -268,6 +346,7 @@ impl Assets {
             override_both,
             frame_interval,
             sprite_size,
+            hololive,
             regular,
             bold,
         }
@@ -368,8 +447,17 @@ fn wrap(font: &Font, s: &str, px: f32, max_w: f32, max_lines: usize) -> Vec<Stri
     lines
 }
 
-/// Renders a card at `scale`, showing sprite sheet frame `frame` (wraps). into premultiplied 0xAARRGGBB pixels (`w * h` of them).
-pub fn render(card: &Card, assets: &Assets, frame: usize, w: u32, h: u32, scale: f64) -> Vec<u32> {
+/// Renders a card at `scale` using popup `variant` and sheet `frame` (wraps),
+/// into `w * h` premultiplied 0xAARRGGBB pixels.
+pub fn render(
+    card: &Card,
+    assets: &Assets,
+    variant: usize,
+    frame: usize,
+    w: u32,
+    h: u32,
+    scale: f64,
+) -> Vec<u32> {
     let mut pm = Pixmap::new(w.max(1), h.max(1)).expect("pixmap");
     let s = scale as f32;
     let (fw, fh) = (w as f32, h as f32);
@@ -393,7 +481,7 @@ pub fn render(card: &Card, assets: &Assets, frame: usize, w: u32, h: u32, scale:
         pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 
-    if let Some(sp) = assets.sprite_for(card) {
+    if let Some(sp) = assets.sprite_for(card, variant) {
         // Nearest-neighbour scaling fits any square sprite into its configured
         // logical-pixel area, including fractional display scale factors.
         let side = (assets.size_for(card) as f64 * scale).round().max(1.0) as usize;
@@ -511,6 +599,144 @@ mod tests {
     use super::{fade, flatten};
 
     #[test]
+    fn hololive_plays_every_character_at_source_timing_with_crisp_pixels() {
+        use super::{render, Assets, CARD_H, CARD_W};
+        use crate::anim::Timing;
+        use crate::config::{Animation, Config};
+        use std::time::Duration;
+
+        let mut animation = Config::parse(include_str!("../presets/hololive.toml"))
+            .unwrap()
+            .animation;
+        animation.fps = 60.0; // The profile must preserve source timing, regardless of this setting.
+        let assets = Assets::load_with_animation(&animation);
+        let mut card = crate::core::Card {
+            session_id: "hololive".into(),
+            kind: crate::protocol::Kind::Done,
+            project: "test".into(),
+            body: "Done".into(),
+            badge: None,
+            ts: 0,
+            pid: 0,
+            app: String::new(),
+            agent: String::new(),
+            pending_count: 0,
+            expires_at: 0,
+            silent: false,
+            dismiss: false,
+        };
+        // Independent frame counts and loop lengths read from the supplied clips.
+        let expected = [
+            (30, 3590),
+            (30, 3600),
+            (10, 1200),
+            (30, 3300),
+            (40, 4800),
+            (30, 3600),
+            (30, 3600),
+            (30, 3620),
+            (30, 3600),
+            (32, 3520),
+            (30, 3600),
+            (30, 3600),
+            (30, 3600),
+            (30, 3600),
+            (40, 4800),
+        ];
+        assert_eq!(assets.hololive.len(), expected.len());
+        let timing = Timing::new();
+        let at = |ms| timing.shown_at + Duration::from_millis(ms);
+        for (variant, (frames, loop_ms)) in expected.into_iter().enumerate() {
+            let sprite = &assets.hololive[variant].sprite;
+            assert_eq!(assets.frames_for(&card, variant), frames);
+            assert_eq!(
+                assets.frame_at(&card, variant, &timing, at(loop_ms - 1)),
+                frames - 1
+            );
+            assert_eq!(assets.frame_at(&card, variant, &timing, at(loop_ms)), 0);
+            assert!(sprite.rgba.chunks(4).all(|px| matches!(px[3], 0 | 255)));
+            assert!(sprite.rgba.chunks(4).any(|px| px[3] == 0));
+            let first = render(
+                &card,
+                &assets,
+                variant,
+                0,
+                CARD_W as u32,
+                CARD_H as u32,
+                1.0,
+            );
+            assert!((1..frames).any(|frame| render(
+                &card,
+                &assets,
+                variant,
+                frame,
+                CARD_W as u32,
+                CARD_H as u32,
+                1.0
+            ) != first));
+            // Both agents must display the selected character, with exactly the same timing.
+            card.agent = "codex".into();
+            assert_eq!(
+                render(
+                    &card,
+                    &assets,
+                    variant,
+                    0,
+                    CARD_W as u32,
+                    CARD_H as u32,
+                    1.0
+                ),
+                first
+            );
+            card.agent.clear();
+            for scale in [1.0, 1.25, 2.0] {
+                let (w, h) = ((CARD_W * scale) as u32, (CARD_H * scale) as u32);
+                let side = (88.0 * scale).round() as usize;
+                let ox = ((96.0 * scale).round() as usize - side) / 2;
+                let oy = (h as usize - side) / 2;
+                let image = render(&card, &assets, variant, 0, w, h, scale);
+                for y in 0..side {
+                    for x in 0..side {
+                        let si = ((y * sprite.h / side) * sprite.w + x * sprite.h / side) * 4;
+                        if sprite.rgba[si + 3] == 255 {
+                            let color = 0xff00_0000
+                                | (sprite.rgba[si] as u32) << 16
+                                | (sprite.rgba[si + 1] as u32) << 8
+                                | sprite.rgba[si + 2] as u32;
+                            assert_eq!(
+                                image[(oy + y) * w as usize + ox + x],
+                                color,
+                                "Hololive variant {variant} blurred at scale {scale}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(assets.frame_at(&card, 0, &timing, at(700)), 6); // Ame's 100 ms frame.
+        assert_eq!(assets.frame_at(&card, 7, &timing, at(360)), 2); // Kiara's 150 ms frame.
+        assert_eq!(assets.frame_at(&card, 3, &timing, at(110)), 1); // Fauna: 9.09 fps.
+        assert_eq!(assets.frame_at(&card, 9, &timing, at(110)), 1); // Lamy: 9.09 fps.
+        assert_eq!(
+            assets.next_wake(&card, 0, &timing, at(610), Duration::from_secs(5)),
+            Some(at(700))
+        );
+
+        let choices: std::collections::HashSet<_> =
+            (0..256).map(|_| assets.choose_sprite()).collect();
+        assert!(
+            choices.len() > 1,
+            "new popups should not always choose the same character"
+        );
+        assert!(choices.iter().all(|&i| i < 15));
+        let disabled = Assets::load_with_animation(&Animation {
+            enabled: false,
+            ..animation
+        });
+        assert!(disabled.hololive.is_empty());
+    }
+
+    #[test]
     fn bundled_character_is_transparent_and_animates() {
         use super::{render, Assets, CARD_H, CARD_W};
         use crate::core::Card;
@@ -543,8 +769,8 @@ mod tests {
             silent: false,
             dismiss: false,
         };
-        let frame_0 = render(&card, &assets, 0, CARD_W as u32, CARD_H as u32, 1.0);
-        let frame_1 = render(&card, &assets, 1, CARD_W as u32, CARD_H as u32, 1.0);
+        let frame_0 = render(&card, &assets, 0, 0, CARD_W as u32, CARD_H as u32, 1.0);
+        let frame_1 = render(&card, &assets, 0, 1, CARD_W as u32, CARD_H as u32, 1.0);
         let changed = (16..80).any(|y| {
             (16..80).any(|x| {
                 let pos = y * CARD_W as usize + x;
@@ -562,7 +788,7 @@ mod tests {
         for scale in [1.0_f64, 1.25, 2.0] {
             let w = (CARD_W * scale) as u32;
             let h = (CARD_H * scale) as u32;
-            let drawn = render(&card, &assets, 0, w, h, scale);
+            let drawn = render(&card, &assets, 0, 0, w, h, scale);
             let side = (64.0 * scale).round() as usize;
             let ox = (16.0 * scale as f32) as usize;
             let oy = (h as usize - side) / 2;
@@ -642,7 +868,7 @@ mod tests {
         for scale in [1.0_f64, 1.25, 2.0] {
             let w = (super::CARD_W * scale) as u32;
             let h = (super::CARD_H * scale) as u32;
-            let image = super::render(&card, &assets, 0, w, h, scale);
+            let image = super::render(&card, &assets, 0, 0, w, h, scale);
             let side = (88.0 * scale).round() as usize;
             let ox = ((96.0 * scale).round() as usize - side) / 2;
             let oy = (h as usize - side) / 2;
@@ -714,9 +940,9 @@ mod tests {
             silent: false,
             dismiss: false,
         };
-        let without_body = render(&card, &assets, 0, CARD_W as u32, CARD_H as u32, 1.0);
+        let without_body = render(&card, &assets, 0, 0, CARD_W as u32, CARD_H as u32, 1.0);
         card.body = "Finished the Codex task".into();
-        let with_body = render(&card, &assets, 0, CARD_W as u32, CARD_H as u32, 1.0);
+        let with_body = render(&card, &assets, 0, 0, CARD_W as u32, CARD_H as u32, 1.0);
 
         // Restrict to the body area so sprite, title, and status dot cannot satisfy the test.
         let body_changed = (42..89).any(|y| {
@@ -756,10 +982,10 @@ mod tests {
             silent: false,
             dismiss: false,
         };
-        let draw = |c: &Card, f| render(c, &assets, f, CARD_W as u32, CARD_H as u32, 1.0);
+        let draw = |c: &Card, f| render(c, &assets, 0, f, CARD_W as u32, CARD_H as u32, 1.0);
         let claude = draw(&card, 0);
         card.agent = "codex".into();
-        assert_eq!(assets.frames_for(&card), 4);
+        assert_eq!(assets.frames_for(&card, 0), 4);
         assert_eq!(assets.frame_interval_for(&card), crate::anim::WAVE_FRAME);
         let codex: Vec<Vec<u32>> = (0..4).map(|f| draw(&card, f)).collect();
         assert_ne!(claude, codex[0], "codex card must not use the Clawd sprite");
@@ -802,7 +1028,7 @@ mod tests {
             ..Animation::default()
         };
         let bae = Assets::load_with_animation(&bae_config);
-        assert_eq!(bae.frames_for(&card), 11);
+        assert_eq!(bae.frames_for(&card, 0), 11);
         assert_eq!(bae.sprite_size, 88);
         assert_eq!(
             bae.frame_interval_for(&card),
@@ -823,13 +1049,13 @@ mod tests {
             .chunks(4)
             .all(|px| px[3] == 0 || px[3] == 255));
         let draw = |assets: &Assets, card: &Card, frame| {
-            render(card, assets, frame, CARD_W as u32, CARD_H as u32, 1.0)
+            render(card, assets, 0, frame, CARD_W as u32, CARD_H as u32, 1.0)
         };
         assert_ne!(draw(&defaults, &card, 0), draw(&bae, &card, 0));
         assert_ne!(draw(&bae, &card, 0), draw(&bae, &card, 1));
 
         card.agent = "codex".into();
-        assert_eq!(bae.frames_for(&card), 11);
+        assert_eq!(bae.frames_for(&card, 0), 11);
         assert_eq!(
             bae.frame_interval_for(&card),
             Duration::from_secs_f64(1.0 / 11.0)
@@ -840,7 +1066,7 @@ mod tests {
             sprite: SpriteChoice::Codex,
             ..bae_config.clone()
         });
-        assert_eq!(codex_for_all.frames_for(&card), 4);
+        assert_eq!(codex_for_all.frames_for(&card, 0), 4);
         assert_eq!(codex_for_all.size_for(&card), 64);
         assert_eq!(draw(&codex_for_all, &card, 0), draw(&defaults, &card, 0));
         card.agent.clear();
@@ -864,7 +1090,7 @@ mod tests {
             enabled: false,
             ..bae_config
         });
-        assert_eq!(disabled.frames_for(&card), 4);
+        assert_eq!(disabled.frames_for(&card, 0), 4);
         assert_eq!(draw(&disabled, &card, 0), draw(&defaults, &card, 0));
     }
 
